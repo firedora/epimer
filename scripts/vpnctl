@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+
+import argparse
+import os
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    subparsers = parser.add_subparsers(dest='root_command')
+    subparsers.required = True
+
+    # Subcommand - user
+    #
+    parser_user = subparsers.add_parser('user')
+    parser_user.set_defaults(func=parse_user_command)
+    parser_user_subparsers = parser_user.add_subparsers(dest='command')
+
+    parser_user_add = parser_user_subparsers.add_parser('add')
+    parser_user_add.add_argument('username')
+    parser_user_add.add_argument('password')
+    parser_user_add.set_defaults(func=add_user)
+
+    parser_user_remove = parser_user_subparsers.add_parser('remove')
+    parser_user_remove.add_argument('username')
+    parser_user_remove.set_defaults(func=remove_user)
+
+    parser_user_list = parser_user_subparsers.add_parser('list')
+    parser_user_list.set_defaults(func=list_users)
+
+    # Subcommand - cert
+    #
+    parser_cert = subparsers.add_parser('cert')
+    parser_cert.set_defaults(func=parse_cert_command)
+    parser_cert_subparsers = parser_cert.add_subparsers(dest='command')
+
+    parser_cert_create = parser_cert_subparsers.add_parser('create')
+    parser_cert_create.add_argument('-t', '--type', type=str, dest='type', choices=['ca', 'server'])
+    parser_cert_create.set_defaults(func=create_certs)
+
+    # Parse
+    arguments = parser.parse_args()
+    arguments.func(arguments)
+
+def parse_user_command(args):
+    pass
+
+def add_user(args):
+    with open('/etc/ipsec.secrets', 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            name, var = line.partition(":")[::2]
+            if name.strip() == args.username:
+                print('The user already exits.')
+                return
+    with open('/etc/ipsec.secrets', 'a') as f:
+        print('{username} : EAP "{password}"'.format(**vars(args)), file=f)
+    os.system('ipsec rereadall')
+
+def remove_user(args):
+    with open('/etc/ipsec.secrets', 'a') as f:
+        lines = f.readlines()
+    with open('/etc/ipsec.secrets', 'w') as f:
+        for line in lines:
+            name, var = line.partition(':')[::2]
+            if name.strip() != args.username:
+                f.write(line)
+    os.system('ipsec rereadall')
+
+def list_users(args):
+    with open('/etc/ipsec.secrets', 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            print(line)
+
+def parse_cert_command(args):
+    pass
+
+def create_certs(args):
+    if args.type == 'ca':
+        cmd = '''cd $PKIDIR
+            ipsec pki --gen --size 4096 --outform pem > ca-key.pem
+            ipsec pki --self --ca --lifetime 3650 --in ca-key.pem --type rsa --dn "C=CN, O=$ORGANIZATION, CN=$CA_NAME" --outform pem > ca-cert.pem'''
+    elif args.type == 'server':
+        cmd = '''cd $PKIDIR
+            ipsec pki --gen --size 4096 --outform pem > server-key.pem
+            ipsec pki --pub --in server-key.pem --type rsa > server-pub.pem
+            ipsec pki --issue --lifetime 3650 \
+                --cacert ca-cert.pem \
+                --cakey ca-key.pem \
+                --in server-pub.pem \
+                --dn "C=CN, O=$ORGANIZATION, CN=$HOST" \
+                --san $HOST \
+                --flag serverAuth \
+                --flag ikeIntermediate \
+                --outform pem  > server-cert.pem
+            rm -f server-pub.pem'''
+    os.system(cmd)
+
+if __name__ == '__main__':
+    main()
